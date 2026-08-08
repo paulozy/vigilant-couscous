@@ -6,9 +6,12 @@
     "types": ["node"],
     "skipLibCheck": true,
 
-    /* Bundler mode — matches how Vercel actually packages /api functions (esbuild) */
-    "module": "esnext",
-    "moduleResolution": "bundler",
+    /* Vercel transpiles each api/*.ts file individually (no bundling) and runs
+       it through Node's native ESM loader, which requires explicit extensions
+       on relative imports. "nodenext" mirrors that at typecheck time — it
+       enforces (and TS will error on) writing e.g. './_lib/auth.js' instead
+       of an extensionless or '.ts' specifier. */
+    "module": "nodenext",
     "moduleDetection": "force",
     "noEmit": true,
 

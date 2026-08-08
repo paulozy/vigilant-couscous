@@ -1,4 +1,4 @@
-import { checkPassword, signSession, sessionCookie, jsonResponse, withErrorHandling } from './_lib/auth'
+import { checkPassword, signSession, sessionCookie, jsonResponse, withErrorHandling } from './_lib/auth.js'
 
 export const POST = withErrorHandling(async (request: Request): Promise<Response> => {
   let body: { password?: unknown }
