@@ -1,11 +1,5 @@
-import { expiredSessionCookie } from './_lib/auth'
+import { expiredSessionCookie, jsonResponse, withErrorHandling } from './_lib/auth'
 
-export async function POST(): Promise<Response> {
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Set-Cookie': expiredSessionCookie(),
-    },
-  })
-}
+export const POST = withErrorHandling(async (): Promise<Response> => {
+  return jsonResponse({ ok: true }, 200, { 'Set-Cookie': expiredSessionCookie() })
+})

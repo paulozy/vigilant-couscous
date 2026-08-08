@@ -1,11 +1,8 @@
-import { SESSION_COOKIE, parseCookie, verifySession } from './_lib/auth'
+import { SESSION_COOKIE, parseCookie, verifySession, jsonResponse, withErrorHandling } from './_lib/auth'
 
-export async function GET(request: Request): Promise<Response> {
+export const GET = withErrorHandling(async (request: Request): Promise<Response> => {
   const token = parseCookie(request.headers.get('cookie'), SESSION_COOKIE)
   const valid = await verifySession(token)
 
-  return new Response(JSON.stringify({ ok: valid }), {
-    status: valid ? 200 : 401,
-    headers: { 'Content-Type': 'application/json' },
-  })
-}
+  return jsonResponse({ ok: valid }, valid ? 200 : 401)
+})

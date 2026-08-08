@@ -1,32 +1,20 @@
-import { checkPassword, signSession, sessionCookie } from './_lib/auth'
+import { checkPassword, signSession, sessionCookie, jsonResponse, withErrorHandling } from './_lib/auth'
 
-export async function POST(request: Request): Promise<Response> {
+export const POST = withErrorHandling(async (request: Request): Promise<Response> => {
   let body: { password?: unknown }
   try {
     body = (await request.json()) as { password?: unknown }
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return jsonResponse({ error: 'Invalid JSON body' }, 400)
   }
 
   const password = typeof body.password === 'string' ? body.password : ''
 
   if (!password || !checkPassword(password)) {
-    return new Response(JSON.stringify({ error: 'Invalid password' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return jsonResponse({ error: 'Invalid password' }, 401)
   }
 
   const token = await signSession()
 
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/json',
-      'Set-Cookie': sessionCookie(token),
-    },
-  })
-}
+  return jsonResponse({ ok: true }, 200, { 'Set-Cookie': sessionCookie(token) })
+})

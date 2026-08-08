@@ -63,3 +63,30 @@ export function sessionCookie(token: string): string {
 export function expiredSessionCookie(): string {
   return `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
 }
+
+export function jsonResponse(body: unknown, status: number, extraHeaders?: Record<string, string>): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+  })
+}
+
+/**
+ * Wraps a route handler so any uncaught exception (e.g. a missing
+ * APP_PASSWORD/AUTH_SECRET env var in the deployment) is logged server-side
+ * (visible in Vercel's Runtime Logs) and returned as a plain 500 JSON
+ * response instead of surfacing as an opaque FUNCTION_INVOCATION_FAILED.
+ */
+export function withErrorHandling(
+  handler: (request: Request) => Promise<Response>,
+): (request: Request) => Promise<Response> {
+  return async (request: Request) => {
+    try {
+      return await handler(request)
+    } catch (err) {
+      console.error('[api] unhandled error:', err)
+      const message = err instanceof Error ? err.message : 'Unknown error'
+      return jsonResponse({ error: 'Internal server error', message }, 500)
+    }
+  }
+}
