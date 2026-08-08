@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import AddCalendarModal from './AddCalendarModal'
+import CalendarGrid from './CalendarGrid'
 
 interface FeedSource {
   id: string
@@ -85,6 +87,7 @@ export default function CalendarDashboard() {
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false)
 
   // Range fixo (hoje ±30 dias), calculado uma vez — mesma janela que o
   // protótipo original buscava do Microsoft Graph.
@@ -185,15 +188,16 @@ export default function CalendarDashboard() {
     }
   }, [feeds, range])
 
-  const addFeed = () => {
+  const openAddModal = () => {
     if (feeds.length >= MAX_FEEDS) return
-    const label = prompt(`Nome da empresa (conta ${feeds.length + 1}):`)
-    if (!label) return
-    const url = prompt('Cole a URL do calendário ICS publicado (Outlook → Configurações → Calendário → Publicar calendário):')
-    if (!url) return
+    setIsAddModalOpen(true)
+  }
+
+  const handleAddFeed = (label: string, url: string) => {
     const next = [...feeds, { id: crypto.randomUUID(), label, url }]
     setFeeds(next)
     saveFeeds(next)
+    setIsAddModalOpen(false)
   }
 
   const removeFeed = (id: string) => {
@@ -202,27 +206,6 @@ export default function CalendarDashboard() {
     saveFeeds(next)
     setSourceStatuses((prev) => prev.filter((s) => s.id !== id))
     setEvents((prev) => prev.filter((e) => e.sourceId !== id))
-  }
-
-  const getEventsForDay = (date: Date) => {
-    return events
-      .filter((event) => new Date(event.start).toDateString() === date.toDateString())
-      .sort((a, b) => a.start.getTime() - b.start.getTime())
-  }
-
-  const getEventsForWeek = (date: Date) => {
-    const start = new Date(date)
-    start.setDate(start.getDate() - start.getDay())
-    const end = new Date(start)
-    end.setDate(end.getDate() + 6)
-
-    return events
-      .filter((event) => event.start >= start && event.start <= end)
-      .sort((a, b) => a.start.getTime() - b.start.getTime())
-  }
-
-  const formatTime = (date: Date) => {
-    return new Date(date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
   }
 
   const formatDate = (date: Date) => {
@@ -260,7 +243,7 @@ export default function CalendarDashboard() {
     setSelectedDate(newDate)
   }
 
-  const displayEvents = view === 'day' ? getEventsForDay(selectedDate) : getEventsForWeek(selectedDate)
+  const gridDays = view === 'day' ? [selectedDate] : getWeekDays(selectedDate)
 
   return (
     <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)', padding: '20px' }}>
@@ -277,7 +260,7 @@ export default function CalendarDashboard() {
             </div>
             {feeds.length < MAX_FEEDS && (
               <button
-                onClick={addFeed}
+                onClick={openAddModal}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -439,52 +422,8 @@ export default function CalendarDashboard() {
                 <div style={{ display: 'inline-block', width: '48px', height: '48px', border: '3px solid #60a5fa', borderTop: '3px solid transparent', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: '16px' }} />
                 <p style={{ color: '#9ca3af' }}>Carregando eventos...</p>
               </div>
-            ) : displayEvents.length === 0 ? (
-              <div style={{ background: '#1e293b', border: '1px solid #475569', borderRadius: '8px', padding: '48px', textAlign: 'center' }}>
-                <div style={{ fontSize: '48px', marginBottom: '16px' }}>📅</div>
-                <p style={{ color: '#9ca3af' }}>Nenhum evento para esse período</p>
-              </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {displayEvents.map((event) => (
-                  <div
-                    key={event.id}
-                    style={{
-                      background: '#1e293b',
-                      borderLeft: `4px solid ${event.color}`,
-                      borderRadius: '8px',
-                      padding: '16px',
-                      transition: 'all 0.3s',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ flex: 1 }}>
-                        <h3 style={{ fontWeight: '600', color: '#fff', fontSize: '18px', margin: '0 0 8px 0' }}>{event.title}</h3>
-                        {event.description && (
-                          <p style={{ fontSize: '12px', color: '#9ca3af', margin: '8px 0' }}>{event.description}</p>
-                        )}
-                        <div style={{ display: 'flex', gap: '16px', marginTop: '8px', fontSize: '12px', color: '#9ca3af' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            🕒 {event.isFullDay ? 'Dia inteiro' : `${formatTime(event.start)} - ${formatTime(event.end)}`}
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            🏢 {event.account}
-                          </div>
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          width: '12px',
-                          height: '12px',
-                          borderRadius: '50%',
-                          background: event.color,
-                          marginTop: '4px',
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <CalendarGrid days={gridDays} events={events} />
             )}
           </>
         )}
@@ -498,7 +437,7 @@ export default function CalendarDashboard() {
               Cole a URL do calendário ICS publicado de até {MAX_FEEDS} contas Outlook pra ver todos os eventos em um único lugar
             </p>
             <button
-              onClick={addFeed}
+              onClick={openAddModal}
               style={{
                 padding: '12px 24px',
                 background: '#2563eb',
@@ -514,6 +453,13 @@ export default function CalendarDashboard() {
           </div>
         )}
       </div>
+
+      <AddCalendarModal
+        open={isAddModalOpen}
+        accountNumber={feeds.length + 1}
+        onClose={() => setIsAddModalOpen(false)}
+        onAdd={handleAddFeed}
+      />
 
       <style>{`
         @keyframes spin {
