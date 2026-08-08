@@ -1,4 +1,4 @@
-import { checkPassword, signSession, sessionCookie } from './_lib/auth.ts'
+import { checkPassword, signSession, sessionCookie } from './_lib/auth'
 
 export async function POST(request: Request): Promise<Response> {
   let body: { password?: unknown }

@@ -1,4 +1,4 @@
-import { SESSION_COOKIE, parseCookie, verifySession } from './_lib/auth.ts'
+import { SESSION_COOKIE, parseCookie, verifySession } from './_lib/auth'
 
 export async function GET(request: Request): Promise<Response> {
   const token = parseCookie(request.headers.get('cookie'), SESSION_COOKIE)

@@ -1,4 +1,4 @@
-import { expiredSessionCookie } from './_lib/auth.ts'
+import { expiredSessionCookie } from './_lib/auth'
 
 export async function POST(): Promise<Response> {
   return new Response(JSON.stringify({ ok: true }), {
