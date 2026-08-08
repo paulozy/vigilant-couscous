@@ -37,7 +37,12 @@ export default function CalendarDashboard() {
   // para expor no bundle do client, mas mantidos fora do código-fonte)
   const CONFIG = {
     clientId: import.meta.env.VITE_MS_CLIENT_ID,
-    tenantId: import.meta.env.VITE_MS_TENANT_ID,
+    // 'organizations' aceita contas de QUALQUER tenant corporativo — necessário
+    // porque o app precisa logar em várias empresas diferentes, cada uma com
+    // seu próprio Microsoft Entra tenant. O App Registration no Azure precisa
+    // estar configurado como multitenant ("Accounts in any organizational
+    // directory") pra isso funcionar: https://learn.microsoft.com/en-us/entra/identity-platform/howto-convert-app-to-be-multi-tenant
+    authority: 'organizations',
     redirectUri: window.location.origin,
   }
 
@@ -50,7 +55,7 @@ export default function CalendarDashboard() {
       setError(null)
 
       // URL de autenticação do Azure
-      const authUrl = `https://login.microsoftonline.com/${CONFIG.tenantId}/oauth2/v2.0/authorize`
+      const authUrl = `https://login.microsoftonline.com/${CONFIG.authority}/oauth2/v2.0/authorize`
       const params = new URLSearchParams({
         client_id: CONFIG.clientId,
         response_type: 'code',
@@ -121,7 +126,7 @@ export default function CalendarDashboard() {
 
           // Trocar código por token
           const tokenResponse = await fetch(
-            'https://login.microsoftonline.com/' + CONFIG.tenantId + '/oauth2/v2.0/token',
+            'https://login.microsoftonline.com/' + CONFIG.authority + '/oauth2/v2.0/token',
             {
               method: 'POST',
               headers: {

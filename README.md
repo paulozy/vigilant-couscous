@@ -15,9 +15,13 @@ cp .env.example .env
 ```
 
 Preencha `.env`:
-- `VITE_MS_CLIENT_ID` / `VITE_MS_TENANT_ID` — do seu App Registration no Azure AD (identificadores públicos de OAuth, ok expor no client).
+- `VITE_MS_CLIENT_ID` — do seu App Registration no Azure AD (identificador público de OAuth, ok expor no client).
 - `APP_PASSWORD` — gere com `openssl rand -base64 24`.
 - `AUTH_SECRET` — gere com `openssl rand -base64 32`. Trocar esse valor invalida todas as sessões ativas (logout global).
+
+**Importante — App Registration multitenant**: como o app loga em contas Outlook de empresas diferentes (tenants diferentes do Azure AD cada uma), o registration precisa estar configurado como multitenant: **Azure/Entra admin center → App registrations → seu app → Authentication → Supported account types → "Accounts in any organizational directory (Any Microsoft Entra ID tenant - Multitenant)"**. Sem isso, contas de fora do tenant "dono" do app recebem o erro `AADSTS50020`. O código já usa o endpoint `/organizations` (não uma tenant ID fixa) para refletir isso — veja `CONFIG.authority` em `src/components/CalendarDashboard.tsx`. ([docs](https://learn.microsoft.com/en-us/entra/identity-platform/howto-convert-app-to-be-multi-tenant))
+
+Cada empresa, no primeiro login, vai ver uma tela de consentimento do Microsoft Entra pedindo pra aceitar as permissões (`Calendars.Read`, `offline_access`) — isso é esperado, só acontece uma vez por tenant. Se a política de consentimento de alguma empresa bloquear consentimento de usuário comum, quem vai precisar aprovar é um admin daquele tenant.
 
 Rode com:
 
@@ -31,7 +35,7 @@ Isso serve a SPA e as funções `/api` na mesma origem — igual à produção, 
 
 1. Suba este repositório para o GitHub (pode ser público — nenhum segredo está no código, só em env vars).
 2. Importe o repo na Vercel.
-3. Em **Project Settings → Environment Variables**, adicione as 4 chaves acima para os ambientes **Production**, **Preview** e **Development**.
+3. Em **Project Settings → Environment Variables**, adicione as 3 chaves acima (`VITE_MS_CLIENT_ID`, `APP_PASSWORD`, `AUTH_SECRET`) para os ambientes **Production**, **Preview** e **Development**.
 4. No **App Registration do Azure**, adicione a URL final da Vercel (ex.: `https://seu-projeto.vercel.app`) como Redirect URI — sem isso o login com a Microsoft falha.
 5. Deploy.
 
