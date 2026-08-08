@@ -1,11 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-interface Account {
-  id: number
-  name: string
-  email: string
-  token: string
-  color: string
+interface FeedSource {
+  id: string
+  label: string
+  url: string
 }
 
 interface CalendarEvent {
@@ -14,187 +12,201 @@ interface CalendarEvent {
   start: Date
   end: Date
   account: string
-  accountEmail: string
+  sourceId: string
   color: string
   description?: string
+  isFullDay: boolean
+}
+
+interface SourceResultDto {
+  id: string
+  label: string
+  ok: boolean
+  events?: { id: string; title: string; start: string; end: string; description?: string; isFullDay: boolean }[]
+  error?: string
+}
+
+interface SourceStatus {
+  id: string
+  label: string
+  color: string
+  status: 'loading' | 'ok' | 'error'
+  eventCount?: number
+  errorMessage?: string
 }
 
 type ViewMode = 'day' | 'week'
 
-interface AuthState {
-  accountName: string
+const FEEDS_STORAGE_KEY = 'uc_ics_feeds'
+const CACHE_STORAGE_KEY = 'uc_events_cache'
+const CACHE_TTL_MS = 5 * 60 * 1000
+const RANGE_DAYS = 30
+const MAX_FEEDS = 3
+
+const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']
+
+const ERROR_MESSAGES: Record<string, string> = {
+  invalid_url: 'URL inválida',
+  fetch_failed: 'Não foi possível acessar o feed',
+  not_ics: 'Isso não parece ser um calendário ICS válido',
+  parse_failed: 'Erro ao processar o calendário',
+}
+
+function friendlyError(code: string | undefined): string {
+  if (!code) return 'Erro desconhecido'
+  if (code.startsWith('http_')) return `Feed indisponível (HTTP ${code.slice(5)})`
+  return ERROR_MESSAGES[code] ?? 'Erro desconhecido'
+}
+
+function loadFeeds(): FeedSource[] {
+  try {
+    const raw = localStorage.getItem(FEEDS_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (f): f is FeedSource =>
+        f && typeof f.id === 'string' && typeof f.label === 'string' && typeof f.url === 'string',
+    )
+  } catch {
+    return []
+  }
+}
+
+function saveFeeds(feeds: FeedSource[]) {
+  localStorage.setItem(FEEDS_STORAGE_KEY, JSON.stringify(feeds))
 }
 
 export default function CalendarDashboard() {
-  const [accounts, setAccounts] = useState<Account[]>([])
+  const [feeds, setFeeds] = useState<FeedSource[]>(loadFeeds)
+  const [sourceStatuses, setSourceStatuses] = useState<SourceStatus[]>([])
   const [events, setEvents] = useState<CalendarEvent[]>([])
   const [view, setView] = useState<ViewMode>('week')
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Configuração da Microsoft (identificadores públicos de app OAuth — seguros
-  // para expor no bundle do client, mas mantidos fora do código-fonte)
-  const CONFIG = {
-    clientId: import.meta.env.VITE_MS_CLIENT_ID,
-    // 'organizations' aceita contas de QUALQUER tenant corporativo — necessário
-    // porque o app precisa logar em várias empresas diferentes, cada uma com
-    // seu próprio Microsoft Entra tenant. O App Registration no Azure precisa
-    // estar configurado como multitenant ("Accounts in any organizational
-    // directory") pra isso funcionar: https://learn.microsoft.com/en-us/entra/identity-platform/howto-convert-app-to-be-multi-tenant
-    authority: 'organizations',
-    redirectUri: window.location.origin,
-  }
-
-  const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']
-
-  // Função para fazer login com a conta Outlook
-  const loginWithOutlook = async (accountName: string) => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      // URL de autenticação do Azure
-      const authUrl = `https://login.microsoftonline.com/${CONFIG.authority}/oauth2/v2.0/authorize`
-      const params = new URLSearchParams({
-        client_id: CONFIG.clientId,
-        response_type: 'code',
-        redirect_uri: CONFIG.redirectUri,
-        scope: 'Calendars.Read offline_access',
-        response_mode: 'query',
-        state: JSON.stringify({ accountName }),
-      })
-
-      window.location.href = `${authUrl}?${params.toString()}`
-    } catch (err) {
-      setError('Erro ao iniciar login: ' + (err as Error).message)
-      setLoading(false)
-    }
-  }
-
-  // Buscar eventos do calendário
-  const fetchCalendarEvents = async (account: Account) => {
-    try {
-      const startDate = new Date()
-      startDate.setDate(startDate.getDate() - 30)
-      const endDate = new Date()
-      endDate.setDate(endDate.getDate() + 30)
-
-      const response = await fetch(
-        `https://graph.microsoft.com/v1.0/me/calendarview?startDateTime=${startDate.toISOString()}&endDateTime=${endDate.toISOString()}&$top=100`,
-        {
-          headers: {
-            Authorization: `Bearer ${account.token}`,
-            'Content-Type': 'application/json',
-          },
-        },
-      )
-
-      const data = await response.json()
-
-      if (data.value) {
-        const calendarEvents: CalendarEvent[] = data.value.map((event: any) => ({
-          id: event.id,
-          title: event.subject,
-          start: new Date(event.start.dateTime),
-          end: new Date(event.end.dateTime),
-          account: account.name,
-          accountEmail: account.email,
-          color: account.color,
-          description: event.bodyPreview,
-        }))
-
-        setEvents((prev) => [...prev, ...calendarEvents])
-      }
-    } catch (err) {
-      console.error('Erro ao buscar eventos:', err)
-      setError('Erro ao buscar eventos do calendário')
-    }
-  }
-
-  // Processar o callback da autenticação
-  useEffect(() => {
-    const handleAuthCallback = async () => {
-      const params = new URLSearchParams(window.location.search)
-      const code = params.get('code')
-      const state = params.get('state')
-
-      if (code && state) {
-        try {
-          setLoading(true)
-          const parsedState: AuthState = JSON.parse(decodeURIComponent(state))
-
-          // Trocar código por token
-          const tokenResponse = await fetch(
-            'https://login.microsoftonline.com/' + CONFIG.authority + '/oauth2/v2.0/token',
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: new URLSearchParams({
-                client_id: CONFIG.clientId,
-                scope: 'Calendars.Read offline_access',
-                code: code,
-                redirect_uri: CONFIG.redirectUri,
-                grant_type: 'authorization_code',
-              }),
-            },
-          )
-
-          const tokenData = await tokenResponse.json()
-
-          if (tokenData.access_token) {
-            // Pegar informações do usuário
-            const userResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
-              headers: {
-                Authorization: `Bearer ${tokenData.access_token}`,
-              },
-            })
-
-            const userData = await userResponse.json()
-
-            // Adicionar conta
-            const newAcc: Account = {
-              id: Date.now(),
-              name: parsedState.accountName,
-              email: userData.userPrincipalName || userData.mail,
-              token: tokenData.access_token,
-              color: colors[accounts.length % colors.length],
-            }
-
-            setAccounts([...accounts, newAcc])
-            fetchCalendarEvents(newAcc)
-
-            // Limpar URL
-            window.history.replaceState({}, document.title, window.location.pathname)
-          } else {
-            setError('Erro ao obter token de acesso')
-          }
-        } catch (err) {
-          setError('Erro ao processar autenticação: ' + (err as Error).message)
-        } finally {
-          setLoading(false)
-        }
-      }
-    }
-
-    handleAuthCallback()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Range fixo (hoje ±30 dias), calculado uma vez — mesma janela que o
+  // protótipo original buscava do Microsoft Graph.
+  const range = useMemo(() => {
+    const from = new Date()
+    from.setDate(from.getDate() - RANGE_DAYS)
+    const to = new Date()
+    to.setDate(to.getDate() + RANGE_DAYS)
+    return { from, to }
   }, [])
 
-  const removeAccount = (id: number) => {
-    const accountToRemove = accounts.find((acc) => acc.id === id)
-    setAccounts(accounts.filter((acc) => acc.id !== id))
-    setEvents(events.filter((evt) => evt.accountEmail !== accountToRemove?.email))
+  useEffect(() => {
+    if (feeds.length === 0) {
+      setSourceStatuses([])
+      setEvents([])
+      return
+    }
+
+    const cacheKey = JSON.stringify({ feeds, from: range.from.toISOString(), to: range.to.toISOString() })
+    let cancelled = false
+
+    const applyResults = (results: SourceResultDto[]) => {
+      if (cancelled) return
+      setSourceStatuses(
+        results.map((r, i) => ({
+          id: r.id,
+          label: r.label,
+          color: colors[i % colors.length],
+          status: r.ok ? 'ok' : 'error',
+          eventCount: r.ok ? r.events?.length : undefined,
+          errorMessage: r.ok ? undefined : friendlyError(r.error),
+        })),
+      )
+      setEvents(
+        results.flatMap((r, i) =>
+          r.ok && r.events
+            ? r.events.map((e) => ({
+                id: e.id,
+                title: e.title,
+                start: new Date(e.start),
+                end: new Date(e.end),
+                account: r.label,
+                sourceId: r.id,
+                color: colors[i % colors.length],
+                description: e.description,
+                isFullDay: e.isFullDay,
+              }))
+            : [],
+        ),
+      )
+    }
+
+    try {
+      const cachedRaw = sessionStorage.getItem(CACHE_STORAGE_KEY)
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw) as { key: string; timestamp: number; sources: SourceResultDto[] }
+        if (cached.key === cacheKey && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+          applyResults(cached.sources)
+          return
+        }
+      }
+    } catch {
+      // cache corrompido, ignora e busca de novo
+    }
+
+    setLoading(true)
+    setError(null)
+    setSourceStatuses(feeds.map((f, i) => ({ id: f.id, label: f.label, color: colors[i % colors.length], status: 'loading' })))
+
+    fetch('/api/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sources: feeds, from: range.from.toISOString(), to: range.to.toISOString() }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`http_${res.status}`)
+        const data = (await res.json()) as { sources: SourceResultDto[] }
+        if (cancelled) return
+        try {
+          sessionStorage.setItem(
+            CACHE_STORAGE_KEY,
+            JSON.stringify({ key: cacheKey, timestamp: Date.now(), sources: data.sources }),
+          )
+        } catch {
+          // sessionStorage cheio/indisponível — segue sem cache
+        }
+        applyResults(data.sources)
+      })
+      .catch(() => {
+        if (!cancelled) setError('Erro ao buscar eventos dos calendários')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [feeds, range])
+
+  const addFeed = () => {
+    if (feeds.length >= MAX_FEEDS) return
+    const label = prompt(`Nome da empresa (conta ${feeds.length + 1}):`)
+    if (!label) return
+    const url = prompt('Cole a URL do calendário ICS publicado (Outlook → Configurações → Calendário → Publicar calendário):')
+    if (!url) return
+    const next = [...feeds, { id: crypto.randomUUID(), label, url }]
+    setFeeds(next)
+    saveFeeds(next)
+  }
+
+  const removeFeed = (id: string) => {
+    const next = feeds.filter((f) => f.id !== id)
+    setFeeds(next)
+    saveFeeds(next)
+    setSourceStatuses((prev) => prev.filter((s) => s.id !== id))
+    setEvents((prev) => prev.filter((e) => e.sourceId !== id))
   }
 
   const getEventsForDay = (date: Date) => {
     return events
-      .filter((event) => {
-        const eventDate = new Date(event.start)
-        return eventDate.toDateString() === date.toDateString()
-      })
+      .filter((event) => new Date(event.start).toDateString() === date.toDateString())
       .sort((a, b) => a.start.getTime() - b.start.getTime())
   }
 
@@ -205,10 +217,7 @@ export default function CalendarDashboard() {
     end.setDate(end.getDate() + 6)
 
     return events
-      .filter((event) => {
-        const eventDate = new Date(event.start)
-        return eventDate >= start && eventDate <= end
-      })
+      .filter((event) => event.start >= start && event.start <= end)
       .sort((a, b) => a.start.getTime() - b.start.getTime())
   }
 
@@ -263,28 +272,22 @@ export default function CalendarDashboard() {
               <div style={{ fontSize: '24px' }}>📅</div>
               <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#fff', margin: 0 }}>Unified Calendar</h1>
               <span style={{ fontSize: '12px', color: '#9ca3af', marginLeft: '10px' }}>
-                {accounts.length} conta{accounts.length !== 1 ? 's' : ''} conectada{accounts.length !== 1 ? 's' : ''}
+                {feeds.length} conta{feeds.length !== 1 ? 's' : ''} conectada{feeds.length !== 1 ? 's' : ''}
               </span>
             </div>
-            {accounts.length < 3 && (
+            {feeds.length < MAX_FEEDS && (
               <button
-                onClick={() => {
-                  const accountName = prompt(`Nome da empresa (conta ${accounts.length + 1}):`)
-                  if (accountName) {
-                    loginWithOutlook(accountName)
-                  }
-                }}
-                disabled={loading}
+                onClick={addFeed}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
                   padding: '8px 16px',
-                  background: loading ? '#60a5fa' : '#2563eb',
+                  background: '#2563eb',
                   color: '#fff',
                   border: 'none',
                   borderRadius: '8px',
-                  cursor: loading ? 'not-allowed' : 'pointer',
+                  cursor: 'pointer',
                   fontWeight: '500',
                 }}
               >
@@ -339,12 +342,12 @@ export default function CalendarDashboard() {
           </div>
         )}
 
-        {/* Accounts Status */}
-        {accounts.length > 0 && (
+        {/* Sources Status */}
+        {sourceStatuses.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px', marginBottom: '20px' }}>
-            {accounts.map((account) => (
+            {sourceStatuses.map((source) => (
               <div
-                key={account.id}
+                key={source.id}
                 style={{
                   background: '#1e293b',
                   border: '1px solid #475569',
@@ -361,16 +364,20 @@ export default function CalendarDashboard() {
                       width: '16px',
                       height: '16px',
                       borderRadius: '50%',
-                      background: account.color,
+                      background: source.status === 'error' ? '#ef4444' : source.color,
                     }}
                   />
                   <div>
-                    <p style={{ fontWeight: '600', color: '#fff', fontSize: '14px', margin: 0 }}>{account.name}</p>
-                    <p style={{ fontSize: '12px', color: '#9ca3af', margin: 0 }}>{account.email}</p>
+                    <p style={{ fontWeight: '600', color: '#fff', fontSize: '14px', margin: 0 }}>{source.label}</p>
+                    <p style={{ fontSize: '12px', color: source.status === 'error' ? '#f87171' : '#9ca3af', margin: 0 }}>
+                      {source.status === 'loading' && 'Carregando...'}
+                      {source.status === 'ok' && `${source.eventCount ?? 0} evento${source.eventCount === 1 ? '' : 's'}`}
+                      {source.status === 'error' && source.errorMessage}
+                    </p>
                   </div>
                 </div>
                 <button
-                  onClick={() => removeAccount(account.id)}
+                  onClick={() => removeFeed(source.id)}
                   style={{
                     padding: '8px',
                     background: 'transparent',
@@ -388,7 +395,7 @@ export default function CalendarDashboard() {
         )}
 
         {/* Navigation */}
-        {accounts.length > 0 && (
+        {feeds.length > 0 && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
               <button
@@ -458,7 +465,7 @@ export default function CalendarDashboard() {
                         )}
                         <div style={{ display: 'flex', gap: '16px', marginTop: '8px', fontSize: '12px', color: '#9ca3af' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            🕒 {formatTime(event.start)} - {formatTime(event.end)}
+                            🕒 {event.isFullDay ? 'Dia inteiro' : `${formatTime(event.start)} - ${formatTime(event.end)}`}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                             🏢 {event.account}
@@ -483,23 +490,22 @@ export default function CalendarDashboard() {
         )}
 
         {/* Initial State */}
-        {accounts.length === 0 && (
+        {feeds.length === 0 && (
           <div style={{ background: 'rgba(30, 41, 59, 0.5)', border: '1px solid rgba(71, 85, 105, 0.5)', borderRadius: '8px', padding: '32px', textAlign: 'center' }}>
             <div style={{ fontSize: '64px', marginBottom: '16px' }}>📅</div>
             <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#fff', marginBottom: '8px' }}>Comece adicionando suas contas</h3>
             <p style={{ color: '#9ca3af', marginBottom: '16px' }}>
-              Conecte suas 3 contas Outlook para ver todos os eventos em um único lugar
+              Cole a URL do calendário ICS publicado de até {MAX_FEEDS} contas Outlook pra ver todos os eventos em um único lugar
             </p>
             <button
-              onClick={() => loginWithOutlook('Empresa 1')}
-              disabled={loading}
+              onClick={addFeed}
               style={{
                 padding: '12px 24px',
-                background: loading ? '#60a5fa' : '#2563eb',
+                background: '#2563eb',
                 color: '#fff',
                 border: 'none',
                 borderRadius: '8px',
-                cursor: loading ? 'not-allowed' : 'pointer',
+                cursor: 'pointer',
                 fontWeight: '600',
               }}
             >
