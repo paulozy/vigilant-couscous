@@ -9,4 +9,8 @@ describe('formatDuration', () => {
   it('hora e minutos', () => {
     expect(formatDuration(90)).toBe('1h30')
   })
+
+  it('hora cheia, sem os minutos zerados', () => {
+    expect(formatDuration(120)).toBe('2h')
+  })
 })
